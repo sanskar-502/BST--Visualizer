@@ -39,21 +39,18 @@ function Sidebar({
             <button
               className="panel-btn"
               onClick={onCreateEmpty}
-              disabled={isAnimating}
             >
               Empty
             </button>
             <button
               className="panel-btn"
               onClick={onCreateRandom}
-              disabled={isAnimating}
             >
               Random
             </button>
             <button
               className="panel-btn"
               onClick={onCreateBalanced}
-              disabled={isAnimating}
             >
               Balanced
             </button>
@@ -65,12 +62,10 @@ function Sidebar({
               className="panel-input"
               value={createCount}
               onChange={(event) => onCreateCountChange(event.target.value)}
-              disabled={isAnimating}
             />
             <button
               className="panel-go"
               onClick={onCreateRandomCount}
-              disabled={isAnimating}
             >
               Random N
             </button>
@@ -89,12 +84,10 @@ function Sidebar({
               className="panel-input"
               value={searchValue}
               onChange={(event) => onSearchChange(event.target.value)}
-              disabled={isAnimating}
             />
             <button
               className="panel-go"
               onClick={onSearch}
-              disabled={isAnimating}
             >
               Go
             </button>
@@ -113,12 +106,10 @@ function Sidebar({
               className="panel-input"
               value={insertValue}
               onChange={(event) => onInsertChange(event.target.value)}
-              disabled={isAnimating}
             />
             <button
               className="panel-go"
               onClick={onInsert}
-              disabled={isAnimating}
             >
               Go
             </button>
@@ -137,12 +128,10 @@ function Sidebar({
               className="panel-input"
               value={removeValue}
               onChange={(event) => onRemoveChange(event.target.value)}
-              disabled={isAnimating}
             />
             <button
               className="panel-go"
               onClick={onRemove}
-              disabled={isAnimating}
             >
               Go
             </button>
@@ -178,3 +167,4 @@ function Sidebar({
 }
 
 export default Sidebar
+

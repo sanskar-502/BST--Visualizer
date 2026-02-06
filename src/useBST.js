@@ -166,6 +166,8 @@ function useBST({ mode = 'BST', speedMultiplier = 1 } = {}) {
   const resumeResolveRef = useRef(null)
   const historyRef = useRef([])
   const historyIndexRef = useRef(-1)
+  const opIdRef = useRef(0)
+  const currentOpRef = useRef(0)
   const statusTitleRef = useRef(statusTitle)
   const statusMessageRef = useRef(statusMessage)
   const codeLinesRef = useRef(codeLines)
@@ -248,8 +250,16 @@ function useBST({ mode = 'BST', speedMultiplier = 1 } = {}) {
 
   const beginOperation = useCallback(
     (title, lines, modeValue) => {
+      const opId = opIdRef.current + 1
+      opIdRef.current = opId
+      currentOpRef.current = opId
       pauseRef.current = false
       setIsPaused(false)
+      if (resumeResolveRef.current) {
+        resumeResolveRef.current()
+        resumeResolveRef.current = null
+        resumePromiseRef.current = null
+      }
       setIsAnimating(true)
       setStatusTitle(title)
       setCodeLines(lines)
@@ -264,37 +274,50 @@ function useBST({ mode = 'BST', speedMultiplier = 1 } = {}) {
       historyIndexRef.current = 0
       setHistoryIndex(0)
       applySnapshot(snapshot)
-      return baseTree
+      return { baseTree, opId }
     },
     [applySnapshot, buildSnapshot]
   )
 
-  const waitIfPaused = useCallback(async () => {
-    if (!pauseRef.current) return
-    if (!resumePromiseRef.current) {
-      resumePromiseRef.current = new Promise((resolve) => {
-        resumeResolveRef.current = resolve
-      })
+  const ensureActive = useCallback((opId) => {
+    if (opId !== currentOpRef.current) {
+      throw new Error('cancelled')
     }
-    await resumePromiseRef.current
   }, [])
 
+  const waitIfPaused = useCallback(
+    async (opId) => {
+      ensureActive(opId)
+      if (!pauseRef.current) return
+      if (!resumePromiseRef.current) {
+        resumePromiseRef.current = new Promise((resolve) => {
+          resumeResolveRef.current = resolve
+        })
+      }
+      await resumePromiseRef.current
+      ensureActive(opId)
+    },
+    [ensureActive]
+  )
+
   const delayWithPause = useCallback(
-    async (ms) => {
+    async (ms, opId) => {
       let remaining = ms
       const chunkSize = 50
       while (remaining > 0) {
-        await waitIfPaused()
+        ensureActive(opId)
+        await waitIfPaused(opId)
         const chunk = Math.min(chunkSize, remaining)
         await delay(chunk)
         remaining -= chunk
       }
     },
-    [waitIfPaused]
+    [ensureActive, waitIfPaused]
   )
 
   const step = useCallback(
-    async (draft, node, { status, codeLine, found = false }) => {
+    async (draft, node, { status, codeLine, found = false }, opId) => {
+      ensureActive(opId)
       clearFlags(draft)
       if (node) {
         node.isHiglighed = true
@@ -304,9 +327,9 @@ function useBST({ mode = 'BST', speedMultiplier = 1 } = {}) {
       setStatusMessage(status)
       setActiveCodeLine(codeLine)
       recordSnapshot(buildSnapshot(nextTree, status, codeLine))
-      await delayWithPause(stepMsRef.current)
+      await delayWithPause(stepMsRef.current, opId)
     },
-    [buildSnapshot, commitTree, delayWithPause, recordSnapshot]
+    [buildSnapshot, commitTree, delayWithPause, ensureActive, recordSnapshot]
   )
 
   const pause = useCallback(() => {
@@ -325,7 +348,8 @@ function useBST({ mode = 'BST', speedMultiplier = 1 } = {}) {
     }
   }, [])
 
-  const finishAnimation = useCallback(() => {
+  const finishAnimation = useCallback((opId) => {
+    if (opId !== currentOpRef.current) return
     pauseRef.current = false
     setIsPaused(false)
     if (resumeResolveRef.current) {
@@ -354,7 +378,7 @@ function useBST({ mode = 'BST', speedMultiplier = 1 } = {}) {
   }, [applySnapshot])
 
   const insertInternal = useCallback(
-    async (draft, value) => {
+    async (draft, value, opId) => {
       if (!draft) {
         const root = createNode(value, nextId())
         root.isHiglighed = true
@@ -364,56 +388,86 @@ function useBST({ mode = 'BST', speedMultiplier = 1 } = {}) {
         setStatusMessage(message)
         setActiveCodeLine(0)
         recordSnapshot(buildSnapshot(nextTree, message, 0))
-        await delayWithPause(stepMsRef.current)
+        await delayWithPause(stepMsRef.current, opId)
         return root
       }
 
       let current = draft
       while (current) {
-        await step(draft, current, {
+        await step(
+          draft,
+          current,
+          {
           status: `Compare ${value} with ${current.value}.`,
           codeLine: 1,
-        })
+          },
+          opId
+        )
 
         if (value === current.value) {
-          await step(draft, current, {
+          await step(
+            draft,
+            current,
+            {
             status: `${value} already exists.`,
             codeLine: 1,
             found: true,
-          })
+            },
+            opId
+          )
           return draft
         }
 
         if (value < current.value) {
-          await step(draft, current, {
+          await step(
+            draft,
+            current,
+            {
             status: `${value} < ${current.value}, go left.`,
             codeLine: 2,
-          })
+            },
+            opId
+          )
 
           if (!current.left) {
             current.left = createNode(value, nextId())
-            await step(draft, current.left, {
+            await step(
+              draft,
+              current.left,
+              {
               status: `Insert ${value} as left child of ${current.value}.`,
               codeLine: 0,
               found: true,
-            })
+              },
+              opId
+            )
             return draft
           }
 
           current = current.left
         } else {
-          await step(draft, current, {
+          await step(
+            draft,
+            current,
+            {
             status: `${value} > ${current.value}, go right.`,
             codeLine: 3,
-          })
+            },
+            opId
+          )
 
           if (!current.right) {
             current.right = createNode(value, nextId())
-            await step(draft, current.right, {
+            await step(
+              draft,
+              current.right,
+              {
               status: `Insert ${value} as right child of ${current.value}.`,
               codeLine: 0,
               found: true,
-            })
+              },
+              opId
+            )
             return draft
           }
 
@@ -427,7 +481,7 @@ function useBST({ mode = 'BST', speedMultiplier = 1 } = {}) {
   )
 
   const rebalanceTree = useCallback(
-    async (draft, originLabel) => {
+    async (draft, originLabel, opId) => {
       if (!draft || modeRef.current !== 'AVL') return draft
       if (!hasImbalance(draft)) return draft
 
@@ -467,40 +521,60 @@ function useBST({ mode = 'BST', speedMultiplier = 1 } = {}) {
         if (balance > 1) {
           if (getBalance(node.left) < 0) {
             node.left = rotateLeft(node.left)
-            await step(rootRef.current, node.left, {
-              status: `LR case at ${node.value}: rotate left on ${node.left.value}.`,
-              codeLine: 3,
-              found: true,
-            })
+            await step(
+              rootRef.current,
+              node.left,
+              {
+                status: `LR case at ${node.value}: rotate left on ${node.left.value}.`,
+                codeLine: 3,
+                found: true,
+              },
+              opId
+            )
           }
           const newRoot = rotateRight(node)
           if (parent) parent[direction] = newRoot
           else rootRef.current = newRoot
-          await step(rootRef.current, newRoot, {
-            status: `Rotate right at ${newRoot.value}.`,
-            codeLine: 1,
-            found: true,
-          })
+          await step(
+            rootRef.current,
+            newRoot,
+            {
+              status: `Rotate right at ${newRoot.value}.`,
+              codeLine: 1,
+              found: true,
+            },
+            opId
+          )
           return newRoot
         }
 
         if (balance < -1) {
           if (getBalance(node.right) > 0) {
             node.right = rotateRight(node.right)
-            await step(rootRef.current, node.right, {
-              status: `RL case at ${node.value}: rotate right on ${node.right.value}.`,
-              codeLine: 4,
-              found: true,
-            })
+            await step(
+              rootRef.current,
+              node.right,
+              {
+                status: `RL case at ${node.value}: rotate right on ${node.right.value}.`,
+                codeLine: 4,
+                found: true,
+              },
+              opId
+            )
           }
           const newRoot = rotateLeft(node)
           if (parent) parent[direction] = newRoot
           else rootRef.current = newRoot
-          await step(rootRef.current, newRoot, {
-            status: `Rotate left at ${newRoot.value}.`,
-            codeLine: 2,
-            found: true,
-          })
+          await step(
+            rootRef.current,
+            newRoot,
+            {
+              status: `Rotate left at ${newRoot.value}.`,
+              codeLine: 2,
+              found: true,
+            },
+            opId
+          )
           return newRoot
         }
 
@@ -521,76 +595,129 @@ function useBST({ mode = 'BST', speedMultiplier = 1 } = {}) {
 
   const search = useCallback(
     async (value) => {
-      if (!Number.isFinite(value) || isAnimating) return
+      if (!Number.isFinite(value)) return
 
-      const baseTree = beginOperation(`Search(${value})`, SEARCH_CODE, 'search')
-      const workingTree = cloneTree(baseTree)
-      if (!workingTree) {
-        const message = 'Tree is empty.'
-        setStatusMessage(message)
-        setActiveCodeLine(0)
-        recordSnapshot(buildSnapshot(baseTree, message, 0))
-        finishAnimation()
-        return
-      }
+      const { baseTree, opId } = beginOperation(
+        `Search(${value})`,
+        SEARCH_CODE,
+        'search'
+      )
 
-      let current = workingTree
-      while (current) {
-        await step(workingTree, current, {
-          status: `Highlight ${current.value}.`,
-          codeLine: 1,
-        })
-
-        if (value === current.value) {
-          await step(workingTree, current, {
-            status: `${value} == ${current.value}, found.`,
-            codeLine: 1,
-            found: true,
-          })
-          finishAnimation()
+      try {
+        const workingTree = cloneTree(baseTree)
+        if (!workingTree) {
+          const message = 'Tree is empty.'
+          setStatusMessage(message)
+          setActiveCodeLine(0)
+          recordSnapshot(buildSnapshot(baseTree, message, 0))
+          finishAnimation(opId)
           return
         }
 
-        if (value < current.value) {
-          await step(workingTree, current, {
-            status: `${value} < ${current.value}, go left.`,
-            codeLine: 2,
-          })
-          current = current.left
-        } else {
-          await step(workingTree, current, {
-            status: `${value} > ${current.value}, go right.`,
-            codeLine: 3,
-          })
-          current = current.right
+        let current = workingTree
+        while (current) {
+          await step(
+            workingTree,
+            current,
+            {
+              status: `Highlight ${current.value}.`,
+              codeLine: 1,
+            },
+            opId
+          )
+
+          if (value === current.value) {
+            await step(
+              workingTree,
+              current,
+              {
+                status: `${value} == ${current.value}, found.`,
+                codeLine: 1,
+                found: true,
+              },
+              opId
+            )
+            finishAnimation(opId)
+            return
+          }
+
+          if (value < current.value) {
+            await step(
+              workingTree,
+              current,
+              {
+                status: `${value} < ${current.value}, go left.`,
+                codeLine: 2,
+              },
+              opId
+            )
+            current = current.left
+          } else {
+            await step(
+              workingTree,
+              current,
+              {
+                status: `${value} > ${current.value}, go right.`,
+                codeLine: 3,
+              },
+              opId
+            )
+            current = current.right
+          }
+        }
+
+        clearFlags(workingTree)
+        const finalTree = commitTree(workingTree)
+        const message = `${value} not found.`
+        setStatusMessage(message)
+        setActiveCodeLine(0)
+        recordSnapshot(buildSnapshot(finalTree, message, 0))
+        finishAnimation(opId)
+      } catch (error) {
+        if (error?.message !== 'cancelled') {
+          throw error
         }
       }
-
-      clearFlags(workingTree)
-      const finalTree = commitTree(workingTree)
-      const message = `${value} not found.`
-      setStatusMessage(message)
-      setActiveCodeLine(0)
-      recordSnapshot(buildSnapshot(finalTree, message, 0))
-      finishAnimation()
     },
-    [beginOperation, buildSnapshot, commitTree, finishAnimation, isAnimating, recordSnapshot, step]
+    [
+      beginOperation,
+      buildSnapshot,
+      commitTree,
+      finishAnimation,
+      recordSnapshot,
+      step,
+    ]
   )
 
   const insert = useCallback(
     async (value) => {
-      if (!Number.isFinite(value) || isAnimating) return
+      if (!Number.isFinite(value)) return
 
-      const baseTree = beginOperation(`Insert(${value})`, INSERT_CODE, 'insert')
-      let workingTree = cloneTree(baseTree)
-      workingTree = await insertInternal(workingTree, value)
-
-      workingTree = await rebalanceTree(workingTree, `Insert(${value})`)
-      const finalTree = commitTree(workingTree)
-      recordSnapshot(
-        buildSnapshot(finalTree, statusMessageRef.current, activeCodeLineRef.current)
+      const { baseTree, opId } = beginOperation(
+        `Insert(${value})`,
+        INSERT_CODE,
+        'insert'
       )
-      finishAnimation()
+
+      try {
+        let workingTree = cloneTree(baseTree)
+        workingTree = await insertInternal(workingTree, value, opId)
+
+        workingTree = await rebalanceTree(workingTree, `Insert(${value})`, opId)
+        const finalTree = commitTree(workingTree)
+        recordSnapshot(
+          buildSnapshot(
+            finalTree,
+            statusMessageRef.current,
+            activeCodeLineRef.current
+          )
+        )
+        finishAnimation(opId)
+      } catch (error) {
+        if (error?.message !== 'cancelled') {
+          throw error
+        }
+      }
     },
     [
       beginOperation,
@@ -598,7 +725,6 @@ function useBST({ mode = 'BST', speedMultiplier = 1 } = {}) {
       commitTree,
       finishAnimation,
       insertInternal,
-      isAnimating,
       rebalanceTree,
       recordSnapshot,
     ]
@@ -606,140 +732,195 @@ function useBST({ mode = 'BST', speedMultiplier = 1 } = {}) {
 
   const remove = useCallback(
     async (value) => {
-      if (!Number.isFinite(value) || isAnimating) return
+      if (!Number.isFinite(value)) return
 
-      const baseTree = beginOperation(`Remove(${value})`, REMOVE_CODE, 'remove')
-      let workingTree = cloneTree(baseTree)
-      if (!workingTree) {
-        const message = 'Tree is empty.'
-        setStatusMessage(message)
-        setActiveCodeLine(0)
-        recordSnapshot(buildSnapshot(baseTree, message, 0))
-        finishAnimation()
-        return
-      }
-
-      let current = workingTree
-      let parent = null
-      let direction = null
-
-      while (current) {
-        await step(workingTree, current, {
-          status: `Searching at ${current.value}.`,
-          codeLine: 0,
-        })
-
-        if (value === current.value) {
-          break
-        }
-
-        parent = current
-        if (value < current.value) {
-          direction = 'left'
-          current = current.left
-        } else {
-          direction = 'right'
-          current = current.right
-        }
-      }
-
-      if (!current) {
-        clearFlags(workingTree)
-        const finalTree = commitTree(workingTree)
-        const message = `${value} not found.`
-        setStatusMessage(message)
-        setActiveCodeLine(0)
-        recordSnapshot(buildSnapshot(finalTree, message, 0))
-        finishAnimation()
-        return
-      }
-
-      if (!current.left && !current.right) {
-        await step(workingTree, current, {
-          status: `${current.value} is a leaf. Remove it.`,
-          codeLine: 1,
-          found: true,
-        })
-        if (!parent) {
-          workingTree = null
-        } else {
-          parent[direction] = null
-        }
-        commitTree(workingTree)
-        await delayWithPause(stepMsRef.current)
-      } else if (!current.left || !current.right) {
-        const child = current.left || current.right
-        await step(workingTree, current, {
-          status: `${current.value} has one child. Replace with child.`,
-          codeLine: 2,
-          found: true,
-        })
-        if (!parent) {
-          workingTree = child
-        } else {
-          parent[direction] = child
-        }
-        commitTree(workingTree)
-        await delayWithPause(stepMsRef.current)
-      } else {
-        await step(workingTree, current, {
-          status: `${current.value} has two children. Find successor.`,
-          codeLine: 3,
-        })
-
-        setHighlightMode('successor')
-        highlightModeRef.current = 'successor'
-        let succParent = current
-        let successor = current.right
-        while (successor.left) {
-          await step(workingTree, successor, {
-            status: `Move to ${successor.value} to find successor.`,
-            codeLine: 3,
-            found: true,
-          })
-          succParent = successor
-          successor = successor.left
-        }
-
-        await step(workingTree, successor, {
-          status: `Successor is ${successor.value}.`,
-          codeLine: 3,
-          found: true,
-        })
-
-        current.value = successor.value
-        await step(workingTree, current, {
-          status: `Swap with successor ${successor.value}.`,
-          codeLine: 3,
-          found: true,
-        })
-
-        setHighlightMode('remove')
-        highlightModeRef.current = 'remove'
-        const succChild = successor.right
-
-        await step(workingTree, successor, {
-          status: `Delete successor ${successor.value}.`,
-          codeLine: 1,
-          found: true,
-        })
-
-        if (succParent.left === successor) {
-          succParent.left = succChild
-        } else {
-          succParent.right = succChild
-        }
-
-        commitTree(workingTree)
-        await delayWithPause(stepMsRef.current)
-      }
-
-      workingTree = await rebalanceTree(workingTree, `Remove(${value})`)
-      const finalTree = commitTree(workingTree)
-      recordSnapshot(
-        buildSnapshot(finalTree, statusMessageRef.current, activeCodeLineRef.current)
+      const { baseTree, opId } = beginOperation(
+        `Remove(${value})`,
+        REMOVE_CODE,
+        'remove'
       )
-      finishAnimation()
+
+      try {
+        let workingTree = cloneTree(baseTree)
+        if (!workingTree) {
+          const message = 'Tree is empty.'
+          setStatusMessage(message)
+          setActiveCodeLine(0)
+          recordSnapshot(buildSnapshot(baseTree, message, 0))
+          finishAnimation(opId)
+          return
+        }
+
+        let current = workingTree
+        let parent = null
+        let direction = null
+
+        while (current) {
+          await step(
+            workingTree,
+            current,
+            {
+              status: `Searching at ${current.value}.`,
+              codeLine: 0,
+            },
+            opId
+          )
+
+          if (value === current.value) {
+            break
+          }
+
+          parent = current
+          if (value < current.value) {
+            direction = 'left'
+            current = current.left
+          } else {
+            direction = 'right'
+            current = current.right
+          }
+        }
+
+        if (!current) {
+          clearFlags(workingTree)
+          const finalTree = commitTree(workingTree)
+          const message = `${value} not found.`
+          setStatusMessage(message)
+          setActiveCodeLine(0)
+          recordSnapshot(buildSnapshot(finalTree, message, 0))
+          finishAnimation(opId)
+          return
+        }
+
+        if (!current.left && !current.right) {
+          await step(
+            workingTree,
+            current,
+            {
+              status: `${current.value} is a leaf. Remove it.`,
+              codeLine: 1,
+              found: true,
+            },
+            opId
+          )
+          if (!parent) {
+            workingTree = null
+          } else {
+            parent[direction] = null
+          }
+          commitTree(workingTree)
+          await delayWithPause(stepMsRef.current, opId)
+        } else if (!current.left || !current.right) {
+          const child = current.left || current.right
+          await step(
+            workingTree,
+            current,
+            {
+              status: `${current.value} has one child. Replace with child.`,
+              codeLine: 2,
+              found: true,
+            },
+            opId
+          )
+          if (!parent) {
+            workingTree = child
+          } else {
+            parent[direction] = child
+          }
+          commitTree(workingTree)
+          await delayWithPause(stepMsRef.current, opId)
+        } else {
+          await step(
+            workingTree,
+            current,
+            {
+              status: `${current.value} has two children. Find successor.`,
+              codeLine: 3,
+            },
+            opId
+          )
+
+          setHighlightMode('successor')
+          highlightModeRef.current = 'successor'
+          let succParent = current
+          let successor = current.right
+          while (successor.left) {
+            await step(
+              workingTree,
+              successor,
+              {
+                status: `Move to ${successor.value} to find successor.`,
+                codeLine: 3,
+                found: true,
+              },
+              opId
+            )
+            succParent = successor
+            successor = successor.left
+          }
+
+          await step(
+            workingTree,
+            successor,
+            {
+              status: `Successor is ${successor.value}.`,
+              codeLine: 3,
+              found: true,
+            },
+            opId
+          )
+
+          current.value = successor.value
+          await step(
+            workingTree,
+            current,
+            {
+              status: `Swap with successor ${successor.value}.`,
+              codeLine: 3,
+              found: true,
+            },
+            opId
+          )
+
+          setHighlightMode('remove')
+          highlightModeRef.current = 'remove'
+          const succChild = successor.right
+
+          await step(
+            workingTree,
+            successor,
+            {
+              status: `Delete successor ${successor.value}.`,
+              codeLine: 1,
+              found: true,
+            },
+            opId
+          )
+
+          if (succParent.left === successor) {
+            succParent.left = succChild
+          } else {
+            succParent.right = succChild
+          }
+
+          commitTree(workingTree)
+          await delayWithPause(stepMsRef.current, opId)
+        }
+
+        workingTree = await rebalanceTree(workingTree, `Remove(${value})`, opId)
+        const finalTree = commitTree(workingTree)
+        recordSnapshot(
+          buildSnapshot(
+            finalTree,
+            statusMessageRef.current,
+            activeCodeLineRef.current
+          )
+        )
+        finishAnimation(opId)
+      } catch (error) {
+        if (error?.message !== 'cancelled') {
+          throw error
+        }
+      }
     },
     [
       beginOperation,
@@ -747,7 +928,6 @@ function useBST({ mode = 'BST', speedMultiplier = 1 } = {}) {
       commitTree,
       delayWithPause,
       finishAnimation,
-      isAnimating,
       recordSnapshot,
       rebalanceTree,
       step,
@@ -755,83 +935,97 @@ function useBST({ mode = 'BST', speedMultiplier = 1 } = {}) {
   )
 
   const createEmpty = useCallback(async () => {
-    if (isAnimating) return
-    beginOperation('Create(Empty)', INSERT_CODE, 'create')
-    setTree(null)
-    const message = 'Tree cleared.'
-    setStatusMessage(message)
-    setActiveCodeLine(0)
-    recordSnapshot(buildSnapshot(null, message, 0))
-    await delayWithPause(stepMsRef.current)
-    finishAnimation()
-  }, [beginOperation, buildSnapshot, delayWithPause, finishAnimation, isAnimating, recordSnapshot])
+    const { opId } = beginOperation('Create(Empty)', INSERT_CODE, 'create')
+    try {
+      setTree(null)
+      const message = 'Tree cleared.'
+      setStatusMessage(message)
+      setActiveCodeLine(0)
+      recordSnapshot(buildSnapshot(null, message, 0))
+      await delayWithPause(stepMsRef.current, opId)
+      finishAnimation(opId)
+    } catch (error) {
+      if (error?.message !== 'cancelled') {
+        throw error
+      }
+    }
+  }, [beginOperation, buildSnapshot, delayWithPause, finishAnimation, recordSnapshot])
 
   const createBalanced = useCallback(async () => {
-    if (isAnimating) return
-    beginOperation('Create(Balanced)', INSERT_CODE, 'create')
+    const { opId } = beginOperation('Create(Balanced)', INSERT_CODE, 'create')
 
-    const values = [5, 12, 18, 23, 29, 36, 41, 48, 52, 60, 67, 71]
-    const buildBalanced = (list) => {
-      if (!list.length) return null
-      const mid = Math.floor(list.length / 2)
-      const node = createNode(list[mid], nextId())
-      node.left = buildBalanced(list.slice(0, mid))
-      node.right = buildBalanced(list.slice(mid + 1))
-      return node
+    try {
+      const values = [5, 12, 18, 23, 29, 36, 41, 48, 52, 60, 67, 71]
+      const buildBalanced = (list) => {
+        if (!list.length) return null
+        const mid = Math.floor(list.length / 2)
+        const node = createNode(list[mid], nextId())
+        node.left = buildBalanced(list.slice(0, mid))
+        node.right = buildBalanced(list.slice(mid + 1))
+        return node
+      }
+
+      const balancedRoot = layoutTree(buildBalanced(values))
+      setTree(balancedRoot)
+      const message = 'Balanced tree created.'
+      setStatusMessage(message)
+      setActiveCodeLine(0)
+      recordSnapshot(buildSnapshot(balancedRoot, message, 0))
+      await delayWithPause(stepMsRef.current, opId)
+      finishAnimation(opId)
+    } catch (error) {
+      if (error?.message !== 'cancelled') {
+        throw error
+      }
     }
-
-    const balancedRoot = layoutTree(buildBalanced(values))
-    setTree(balancedRoot)
-    const message = 'Balanced tree created.'
-    setStatusMessage(message)
-    setActiveCodeLine(0)
-    recordSnapshot(buildSnapshot(balancedRoot, message, 0))
-    await delayWithPause(stepMsRef.current)
-    finishAnimation()
   }, [
     beginOperation,
     buildSnapshot,
     delayWithPause,
     finishAnimation,
-    isAnimating,
     nextId,
     recordSnapshot,
   ])
 
   const createRandom = useCallback(async (countOverride) => {
-    if (isAnimating) return
-    beginOperation('Create(Random)', INSERT_CODE, 'insert')
+    const { opId } = beginOperation('Create(Random)', INSERT_CODE, 'insert')
 
-    let workingTree = null
-    setTree(null)
-    const clearingMessage = 'Clearing tree...'
-    setStatusMessage(clearingMessage)
-    setActiveCodeLine(0)
-    recordSnapshot(buildSnapshot(null, clearingMessage, 0))
-    await delayWithPause(stepMsRef.current)
+    try {
+      let workingTree = null
+      setTree(null)
+      const clearingMessage = 'Clearing tree...'
+      setStatusMessage(clearingMessage)
+      setActiveCodeLine(0)
+      recordSnapshot(buildSnapshot(null, clearingMessage, 0))
+      await delayWithPause(stepMsRef.current, opId)
 
-    const requested = Number.isFinite(countOverride)
-      ? Math.max(1, Math.round(countOverride))
-      : null
-    const count = requested ?? 5 + Math.floor(Math.random() * 6)
-    const values = new Set()
-    while (values.size < count) {
-      values.add(5 + Math.floor(Math.random() * 90))
+      const requested = Number.isFinite(countOverride)
+        ? Math.max(1, Math.round(countOverride))
+        : null
+      const count = requested ?? 5 + Math.floor(Math.random() * 6)
+      const values = new Set()
+      while (values.size < count) {
+        values.add(5 + Math.floor(Math.random() * 90))
+      }
+
+      for (const value of values) {
+        setStatusMessage(`Insert ${value} (random).`)
+        workingTree = await insertInternal(workingTree, value, opId)
+        workingTree = await rebalanceTree(workingTree, 'Create(Random)', opId)
+        commitTree(workingTree)
+      }
+
+      const message = 'Random tree created.'
+      setStatusMessage(message)
+      recordSnapshot(
+        buildSnapshot(workingTree, message, activeCodeLineRef.current)
+      )
+      finishAnimation(opId)
+    } catch (error) {
+      if (error?.message !== 'cancelled') {
+        throw error
+      }
     }
-
-    for (const value of values) {
-      setStatusMessage(`Insert ${value} (random).`)
-      workingTree = await insertInternal(workingTree, value)
-      workingTree = await rebalanceTree(workingTree, 'Create(Random)')
-      commitTree(workingTree)
-    }
-
-    const message = 'Random tree created.'
-    setStatusMessage(message)
-    recordSnapshot(
-      buildSnapshot(workingTree, message, activeCodeLineRef.current)
-    )
-    finishAnimation()
   }, [
     beginOperation,
     buildSnapshot,
@@ -839,7 +1033,6 @@ function useBST({ mode = 'BST', speedMultiplier = 1 } = {}) {
     delayWithPause,
     finishAnimation,
     insertInternal,
-    isAnimating,
     recordSnapshot,
     rebalanceTree,
   ])
