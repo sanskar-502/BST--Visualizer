@@ -1,0 +1,32 @@
+:root {
+  font-family: "Trebuchet MS", "Lucida Grande", "Lucida Sans Unicode", Arial,
+    sans-serif;
+  color: #111;
+  background-color: #e6e6e6;
+  font-synthesis: none;
+  text-rendering: optimizeLegibility;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body,
+#root {
+  height: 100%;
+  margin: 0;
+}
+
+body {
+  background: #e6e6e6;
+}
+
+button,
+input,
+select,
+textarea {
+  font: inherit;
+}
