@@ -4,6 +4,21 @@ const STEP_MS = 500
 const MIN_VALUE = -999
 const MAX_VALUE = 999
 const MAX_RANDOM_NODES = 50
+const BALANCED_NODE_COUNT = 12
+const RANDOM_MIN = 5
+const RANDOM_MAX = 94
+const PRESET_RANDOM_TREES = [
+  [62, 18, 79, 12, 25, 71, 88, 5, 16, 22, 29, 75],
+  [41, 64, 15, 8, 23, 50, 72, 4, 11, 19, 27, 68],
+  [57, 33, 84, 21, 39, 66, 90, 14, 27, 36, 45, 73],
+  [48, 26, 81, 17, 32, 60, 92, 9, 22, 29, 35, 69],
+  [53, 31, 77, 20, 37, 59, 89, 10, 24, 28, 43, 70],
+  [46, 28, 86, 16, 34, 63, 93, 7, 21, 30, 40, 72],
+  [58, 35, 82, 19, 38, 65, 91, 6, 24, 33, 44, 74],
+  [49, 27, 83, 13, 32, 61, 87, 5, 18, 25, 36, 67],
+  [55, 30, 85, 22, 41, 62, 94, 8, 26, 34, 47, 76],
+  [52, 29, 80, 15, 33, 58, 90, 9, 20, 28, 42, 71],
+]
 
 const SEARCH_CODE = [
   'if this is null return',
@@ -145,6 +160,14 @@ const buildTree = (values, nextId) => {
 }
 
 const delay = (ms) => new Promise((resolve) => setTimeout(resolve, ms))
+
+const generateUniqueValues = (count) => {
+  const values = new Set()
+  while (values.size < count) {
+    values.add(RANDOM_MIN + Math.floor(Math.random() * (RANDOM_MAX - RANDOM_MIN + 1)))
+  }
+  return Array.from(values)
+}
 
 function useBST({ mode = 'BST', speedMultiplier = 1 } = {}) {
   const idRef = useRef(1)
@@ -1001,7 +1024,9 @@ function useBST({ mode = 'BST', speedMultiplier = 1 } = {}) {
     const { opId } = beginOperation('Create(Balanced)', INSERT_CODE, 'create')
 
     try {
-      const values = [5, 12, 18, 23, 29, 36, 41, 48, 52, 60, 67, 71]
+      const values = generateUniqueValues(BALANCED_NODE_COUNT).sort(
+        (a, b) => a - b
+      )
       const buildBalanced = (list) => {
         if (!list.length) return null
         const mid = Math.floor(list.length / 2)
@@ -1017,7 +1042,6 @@ function useBST({ mode = 'BST', speedMultiplier = 1 } = {}) {
       setStatusMessage(message)
       setActiveCodeLine(0)
       recordSnapshot(buildSnapshot(balancedRoot, message, 0))
-      await delayWithPause(stepMsRef.current, opId)
       finishAnimation(opId)
     } catch (error) {
       if (error?.message !== 'cancelled') {
@@ -1027,7 +1051,6 @@ function useBST({ mode = 'BST', speedMultiplier = 1 } = {}) {
   }, [
     beginOperation,
     buildSnapshot,
-    delayWithPause,
     finishAnimation,
     nextId,
     recordSnapshot,
@@ -1037,10 +1060,12 @@ function useBST({ mode = 'BST', speedMultiplier = 1 } = {}) {
     const { opId } = beginOperation('Create(Random)', INSERT_CODE, 'insert')
 
     try {
+      const normalizedCount =
+        typeof countOverride === 'number' ? countOverride : undefined
       if (
-        countOverride !== undefined &&
-        countOverride !== null &&
-        !Number.isFinite(countOverride)
+        normalizedCount !== undefined &&
+        normalizedCount !== null &&
+        !Number.isFinite(normalizedCount)
       ) {
         const message = `N must be an integer between 1 and ${MAX_RANDOM_NODES}.`
         setStatusMessage(message)
@@ -1051,8 +1076,8 @@ function useBST({ mode = 'BST', speedMultiplier = 1 } = {}) {
       }
 
       if (
-        Number.isFinite(countOverride) &&
-        (!Number.isInteger(countOverride) || countOverride < 1)
+        Number.isFinite(normalizedCount) &&
+        (!Number.isInteger(normalizedCount) || normalizedCount < 1)
       ) {
         const message = `N must be an integer between 1 and ${MAX_RANDOM_NODES}.`
         setStatusMessage(message)
@@ -1062,43 +1087,32 @@ function useBST({ mode = 'BST', speedMultiplier = 1 } = {}) {
         return
       }
 
-      let workingTree = null
       setTree(null)
-      const clearingMessage = 'Clearing tree...'
-      setStatusMessage(clearingMessage)
-      setActiveCodeLine(0)
-      recordSnapshot(buildSnapshot(null, clearingMessage, 0))
-      await delayWithPause(stepMsRef.current, opId)
 
-      const requested = Number.isFinite(countOverride)
-        ? Math.max(1, Math.round(countOverride))
+      const requested = Number.isFinite(normalizedCount)
+        ? Math.max(1, Math.round(normalizedCount))
         : null
       const clamped = requested
         ? Math.min(requested, MAX_RANDOM_NODES)
         : null
-      const count = clamped ?? 5 + Math.floor(Math.random() * 6)
+      const values = clamped
+        ? generateUniqueValues(clamped)
+        : PRESET_RANDOM_TREES[
+            Math.floor(Math.random() * PRESET_RANDOM_TREES.length)
+          ]
+
       if (requested && requested > MAX_RANDOM_NODES) {
         const message = `N capped at ${MAX_RANDOM_NODES}.`
         setStatusMessage(message)
         recordSnapshot(buildSnapshot(null, message, 0))
       }
-      const values = new Set()
-      while (values.size < count) {
-        values.add(5 + Math.floor(Math.random() * 90))
-      }
 
-      for (const value of values) {
-        setStatusMessage(`Insert ${value} (random).`)
-        workingTree = await insertInternal(workingTree, value, opId)
-        workingTree = await rebalanceTree(workingTree, 'Create(Random)', opId)
-        commitTree(workingTree)
-      }
-
+      const randomRoot = buildTree(values, nextId)
+      setTree(randomRoot)
       const message = 'Random tree created.'
       setStatusMessage(message)
-      recordSnapshot(
-        buildSnapshot(workingTree, message, activeCodeLineRef.current)
-      )
+      setActiveCodeLine(0)
+      recordSnapshot(buildSnapshot(randomRoot, message, 0))
       finishAnimation(opId)
     } catch (error) {
       if (error?.message !== 'cancelled') {
@@ -1108,12 +1122,9 @@ function useBST({ mode = 'BST', speedMultiplier = 1 } = {}) {
   }, [
     beginOperation,
     buildSnapshot,
-    commitTree,
-    delayWithPause,
     finishAnimation,
-    insertInternal,
+    nextId,
     recordSnapshot,
-    rebalanceTree,
   ])
 
   const canStepBack = historyIndex > 0

@@ -38,19 +38,19 @@ function Sidebar({
           <div className="panel-row">
             <button
               className="panel-btn"
-              onClick={onCreateEmpty}
+              onClick={() => onCreateEmpty()}
             >
               Empty
             </button>
             <button
               className="panel-btn"
-              onClick={onCreateRandom}
+              onClick={() => onCreateRandom()}
             >
               Random
             </button>
             <button
               className="panel-btn"
-              onClick={onCreateBalanced}
+              onClick={() => onCreateBalanced()}
             >
               Balanced
             </button>
