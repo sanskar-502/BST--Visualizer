@@ -40,7 +40,12 @@ function App() {
   const parseInput = (value) => {
     const trimmed = value.trim()
     if (!trimmed) return NaN
-    return Number(trimmed)
+    if (trimmed.length > 6) return NaN
+    const numberValue = Number(trimmed)
+    if (!Number.isFinite(numberValue) || !Number.isInteger(numberValue)) {
+      return NaN
+    }
+    return numberValue
   }
 
   const handleInsert = () => insert(parseInput(insertValue))

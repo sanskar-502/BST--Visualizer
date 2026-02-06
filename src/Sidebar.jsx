@@ -61,6 +61,8 @@ function Sidebar({
             <input
               className="panel-input"
               value={createCount}
+              maxLength={3}
+              inputMode="numeric"
               onChange={(event) => onCreateCountChange(event.target.value)}
             />
             <button
@@ -83,6 +85,8 @@ function Sidebar({
             <input
               className="panel-input"
               value={searchValue}
+              maxLength={6}
+              inputMode="numeric"
               onChange={(event) => onSearchChange(event.target.value)}
             />
             <button
@@ -105,6 +109,8 @@ function Sidebar({
             <input
               className="panel-input"
               value={insertValue}
+              maxLength={6}
+              inputMode="numeric"
               onChange={(event) => onInsertChange(event.target.value)}
             />
             <button
@@ -127,6 +133,8 @@ function Sidebar({
             <input
               className="panel-input"
               value={removeValue}
+              maxLength={6}
+              inputMode="numeric"
               onChange={(event) => onRemoveChange(event.target.value)}
             />
             <button
@@ -156,7 +164,7 @@ function Sidebar({
               onClick={() => toggleSection(section.key)}
             >
               <span>{section.label}</span>
-              <span className="chevron">▶</span>
+              <span className="chevron">{'>'}</span>
             </button>
             {activeSection === section.key && renderPanel(section.key)}
           </div>
@@ -167,4 +175,5 @@ function Sidebar({
 }
 
 export default Sidebar
+
 

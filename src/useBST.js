@@ -1,6 +1,9 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 
 const STEP_MS = 500
+const MIN_VALUE = -999
+const MAX_VALUE = 999
+const MAX_RANDOM_NODES = 50
 
 const SEARCH_CODE = [
   'if this is null return',
@@ -279,6 +282,16 @@ function useBST({ mode = 'BST', speedMultiplier = 1 } = {}) {
     [applySnapshot, buildSnapshot]
   )
 
+  const getValueError = useCallback((value, label = 'Value') => {
+    if (!Number.isFinite(value) || !Number.isInteger(value)) {
+      return `${label} must be an integer between ${MIN_VALUE} and ${MAX_VALUE}.`
+    }
+    if (value < MIN_VALUE || value > MAX_VALUE) {
+      return `${label} must be between ${MIN_VALUE} and ${MAX_VALUE}.`
+    }
+    return null
+  }, [])
+
   const ensureActive = useCallback((opId) => {
     if (opId !== currentOpRef.current) {
       throw new Error('cancelled')
@@ -359,6 +372,21 @@ function useBST({ mode = 'BST', speedMultiplier = 1 } = {}) {
     }
     setIsAnimating(false)
   }, [])
+
+  const startInputError = useCallback(
+    (message) => {
+      const { baseTree, opId } = beginOperation(
+        'Input Error',
+        SEARCH_CODE,
+        'search'
+      )
+      setStatusMessage(message)
+      setActiveCodeLine(0)
+      recordSnapshot(buildSnapshot(baseTree, message, 0))
+      finishAnimation(opId)
+    },
+    [beginOperation, buildSnapshot, finishAnimation, recordSnapshot]
+  )
 
   const stepBack = useCallback(() => {
     if (historyIndexRef.current <= 0) return
@@ -595,7 +623,11 @@ function useBST({ mode = 'BST', speedMultiplier = 1 } = {}) {
 
   const search = useCallback(
     async (value) => {
-      if (!Number.isFinite(value)) return
+      const error = getValueError(value)
+      if (error) {
+        startInputError(error)
+        return
+      }
 
       const { baseTree, opId } = beginOperation(
         `Search(${value})`,
@@ -684,14 +716,20 @@ function useBST({ mode = 'BST', speedMultiplier = 1 } = {}) {
       buildSnapshot,
       commitTree,
       finishAnimation,
+      getValueError,
       recordSnapshot,
+      startInputError,
       step,
     ]
   )
 
   const insert = useCallback(
     async (value) => {
-      if (!Number.isFinite(value)) return
+      const error = getValueError(value)
+      if (error) {
+        startInputError(error)
+        return
+      }
 
       const { baseTree, opId } = beginOperation(
         `Insert(${value})`,
@@ -724,15 +762,21 @@ function useBST({ mode = 'BST', speedMultiplier = 1 } = {}) {
       buildSnapshot,
       commitTree,
       finishAnimation,
+      getValueError,
       insertInternal,
       rebalanceTree,
       recordSnapshot,
+      startInputError,
     ]
   )
 
   const remove = useCallback(
     async (value) => {
-      if (!Number.isFinite(value)) return
+      const error = getValueError(value)
+      if (error) {
+        startInputError(error)
+        return
+      }
 
       const { baseTree, opId } = beginOperation(
         `Remove(${value})`,
@@ -928,8 +972,10 @@ function useBST({ mode = 'BST', speedMultiplier = 1 } = {}) {
       commitTree,
       delayWithPause,
       finishAnimation,
+      getValueError,
       recordSnapshot,
       rebalanceTree,
+      startInputError,
       step,
     ]
   )
@@ -991,6 +1037,31 @@ function useBST({ mode = 'BST', speedMultiplier = 1 } = {}) {
     const { opId } = beginOperation('Create(Random)', INSERT_CODE, 'insert')
 
     try {
+      if (
+        countOverride !== undefined &&
+        countOverride !== null &&
+        !Number.isFinite(countOverride)
+      ) {
+        const message = `N must be an integer between 1 and ${MAX_RANDOM_NODES}.`
+        setStatusMessage(message)
+        setActiveCodeLine(0)
+        recordSnapshot(buildSnapshot(null, message, 0))
+        finishAnimation(opId)
+        return
+      }
+
+      if (
+        Number.isFinite(countOverride) &&
+        (!Number.isInteger(countOverride) || countOverride < 1)
+      ) {
+        const message = `N must be an integer between 1 and ${MAX_RANDOM_NODES}.`
+        setStatusMessage(message)
+        setActiveCodeLine(0)
+        recordSnapshot(buildSnapshot(null, message, 0))
+        finishAnimation(opId)
+        return
+      }
+
       let workingTree = null
       setTree(null)
       const clearingMessage = 'Clearing tree...'
@@ -1002,7 +1073,15 @@ function useBST({ mode = 'BST', speedMultiplier = 1 } = {}) {
       const requested = Number.isFinite(countOverride)
         ? Math.max(1, Math.round(countOverride))
         : null
-      const count = requested ?? 5 + Math.floor(Math.random() * 6)
+      const clamped = requested
+        ? Math.min(requested, MAX_RANDOM_NODES)
+        : null
+      const count = clamped ?? 5 + Math.floor(Math.random() * 6)
+      if (requested && requested > MAX_RANDOM_NODES) {
+        const message = `N capped at ${MAX_RANDOM_NODES}.`
+        setStatusMessage(message)
+        recordSnapshot(buildSnapshot(null, message, 0))
+      }
       const values = new Set()
       while (values.size < count) {
         values.add(5 + Math.floor(Math.random() * 90))
